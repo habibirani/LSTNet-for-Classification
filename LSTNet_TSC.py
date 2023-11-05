@@ -45,28 +45,23 @@ parser.add_argument('--num_classes', type=int, default=2,
                     help='number of classes')
 parser.add_argument('--classification_loss', type=str, default='cross_entropy',
                     help='classification loss function (e.g., cross_entropy)')
-# ...
 
-# In your main script:
 if args.classification_loss == 'cross_entropy':
     criterion = nn.CrossEntropyLoss()
 else:
-    # Add support for other classification loss functions (e.g., focal loss, weighted loss) as needed
+   
     raise NotImplementedError("Unsupported classification loss function")
 
-# ... (The rest of the code remains the same)
+
 
 # Modify the evaluation loop to calculate classification loss and accuracy
 try:
     print('begin training')
     for epoch in range(1, args.epochs + 1):
-        # ...
+       
         train_loss = train(Data, Data.train[0], Data.train[1], model, criterion, optim, args.batch_size)
         val_loss, val_accuracy = evaluate_classification(Data, Data.valid[0], Data.valid[1], model, criterion, args.batch_size)
         print('| end of epoch {:3d} | time: {:5.2f}s | train_loss {:5.4f} | valid_loss {:5.4f} | valid_accuracy  {:5.4f}'.format(epoch, (time.time() - epoch_start_time), train_loss, val_loss, val_accuracy))
-        # ...
-
-# ... (The saving of the best model and test evaluation remains the same)
 
 print("args.save:", args.save)
 # Load the best saved model and evaluate on the test set
