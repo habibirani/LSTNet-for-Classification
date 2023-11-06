@@ -3,11 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class LSTNetForClassification(nn.Module):
-    def __init__(self, args, data):
+    def __init__(self, args):
         super(LSTNetForClassification, self).__init()
         self.use_cuda = args.cuda
         self.P = args.window
-        self.m = data.m
         self.hidR = args.hidRNN
         self.hidC = args.hidCNN
         self.hidS = args.hidSkip
