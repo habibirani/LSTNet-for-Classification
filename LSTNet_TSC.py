@@ -1,12 +1,11 @@
-import argparse
 import torch
 import torch.nn as nn
-import numpy as np
+import torch.nn.functional as F
+import argparse
 from LSTNet import LSTNetForClassification
+import time
 from utils import *
 import Optim
-from unimib_shar_adl_load_dataset import unimib_load_dataset
-
 
 def namestr(obj, namespace):
     return [name for name in namespace if namespace[name] is obj]
@@ -21,89 +20,102 @@ def get_shapes(np_arr_list):
             + " data type is " + str(i.dtype) + "\n")
     return shapes
 
-
-# Define a new evaluation function for classification
-def evaluate_classification(data, X, Y, model, criterion, batch_size):
-    model.eval()
-    total_loss = 0
-    correct = 0
-    total_samples = 0
-
-    for X, Y in data.get_batches(X, Y, batch_size, False):
-        output = model(X)
-        loss = criterion(output, Y)
-
-        total_loss += loss.item()
-        _, predicted = output.max(1)
-        correct += predicted.eq(Y).sum().item()
-        total_samples += X.size(0)
-
-    accuracy = correct / total_samples
-    return total_loss, accuracy
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='PyTorch Time series classification')
-    parser.add_argument('--model', type=str, default='LSTNet', help='')
-    parser.add_argument('--hidCNN', type=int, default=100, help='number of CNN hidden units')
-    parser.add_argument('--hidRNN', type=int, default=100, help='number of RNN hidden units')
-    parser.add_argument('--num_classes', type=int, default=9, help='number of classes')  # Adjust the number of classes
-    parser.add_argument('--window', type=int, default=24 * 7, help='window size')  # Add 'window' parameter
-    parser.add_argument('--classification_loss', type=str, default='cross_entropy', help='classification loss function (e.g., cross_entropy)')
-    parser.add_argument('--cuda', action='store_true', default=False,
-                    help='Enable CUDA for GPU acceleration')
-
-    # Add other arguments as needed
-    args = parser.parse_args()
-    args.cuda = args.cuda and torch.cuda.is_available()  # Check if CUDA is available and the flag is set
-
-
-    if args.classification_loss == 'cross_entropy':
-        criterion = nn.CrossEntropyLoss()
-    else:
-        raise NotImplementedError("Unsupported classification loss function")
-
     dataset = "UniMiB SHAR"
     datasetfn = 'mobiact_adl_load_dataset.py'
     full_filename = 'unimib_shar_adl_load_dataset.py'
-   
+
     #x_train, y_train, x_test, y_test = unimib_load_dataset(incl_val_group = False)
     x_train, y_train, x_validate, y_validate, x_test, y_test = unimib_load_dataset(incl_val_group = True)
     t_names = ['StandingUpFS','StandingUpFL','Walking','Running','GoingUpS','Jumping','GoingDownS','LyingDownFS','SittingDown']
 
-    train_ratio = 0.6
-    valid_ratio = 0.2
-    cuda = True
-    horizon = 12 
-    window = 24
-    normalize = 2
-
-    data = Data_utility(x_train, train_ratio, valid_ratio, cuda, horizon, window, normalize)
-
+  
     print(get_shapes([x_train, y_train, x_validate, y_validate, x_test, y_test]))
 
-    # You may need to preprocess the dataset (e.g., normalization, reshaping) to fit the model
 
-    # Initialize and load your LSTNetForClassification model here
-    model = LSTNetForClassification(args, data )  # Modify this according to your model
+def evaluate_classification(data, X, Y, model, batch_size):
+    model.eval()
+    total_correct = 0
+    total_samples = 0
 
-    # Train your model and perform validation
-    try:
-        print('begin training')
-        for epoch in range(1, args.epochs + 1):
-            # Training loop
-            train_loss = train(x_train, x_train.train[0], x_train.train[1], model, criterion, optim, args.batch_size)
+    for X, Y in data.get_batches(X, Y, batch_size, False):
+        output = model(X)
+        _, predicted_labels = torch.max(output, 1)
+        total_correct += (predicted_labels == Y).sum().item()
+        total_samples += Y.size(0)
 
-            # Validation loop
-            val_loss, val_accuracy = evaluate_classification(x_train, x_train.valid[0], x_train.valid[1], model, criterion, args.batch_size)
+    accuracy = total_correct / total_samples
+    return accuracy
 
-            print('| end of epoch {:3d} | time: {:5.2f}s | train_loss {:5.4f} | valid_loss {:5.4f} | valid_accuracy {:5.4f}'.format(epoch, (time.time() - epoch_start_time), train_loss, val_loss, val_accuracy))
+def train_classification(data, X, Y, model, criterion, optim, batch_size):
+    model.train()
+    total_loss = 0
+    total_samples = 0
 
-        # Load the best saved model and evaluate on the test set
-        with open(args.save, 'rb') as f:
-            model = torch.load(f)
-        test_loss, test_accuracy = evaluate_classification(x_train, x_test.test[0], x_test.test[1], model, criterion, args.batch_size)
-        print("test_loss {:5.4f} | test_accuracy {:5.4f}".format(test_loss, test_accuracy))
+    for X, Y in data.get_batches(X, Y, batch_size, True):
+        model.zero_grad()
+        output = model(X)
+        loss = criterion(output, Y)
+        loss.backward()
+        grad_norm = optim.step()
+        total_loss += loss.item()
+        total_samples += Y.size(0)
 
-    except KeyboardInterrupt:
-        print('-' * 89)
-        print('Exiting from training early')
+    return total_loss / total_samples
+
+batch_size = 32 
+input_size = 6  
+hidden_size = 50
+output_size = 9  
+epochs = 100
+lr = 0.001
+
+# Create model, optimizer, and criterion
+model = LSTNetForClassification(input_size, hidden_size, output_size)
+optimizer = optim.Adam(model.parameters(), lr=lr)
+criterion = nn.CrossEntropyLoss()
+
+# Training loop
+for epoch in range(epochs):
+    for i in range(len(x_train)):
+        x, y = x_train[i:i+1], y_train[i:i+1]
+        loss = train(model, optimizer, criterion, x, y)
+
+    if epoch % 10 == 0:
+        accuracy = evaluate(model, x_test, y_test)
+        print(f'Epoch {epoch}: Test Accuracy: {accuracy:.4f}')
+
+# Save the trained model
+torch.save(model.state_dict(), 'simple_model.pth')
+
+print(dataset, "1D CNN")
+print("Final Validation Accuracy: %0.3f" % history.history['val_accuracy'][-1])
+plt.plot(history.history["loss"], label="Training Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+plt.ylim([0,1.2]) #set limit - 1.2 has been a good value experimentally
+plt.legend()
+plt.show()
+
+predictions = model.predict(x_test, verbose=0,batch_size=32)
+
+#must use values not one-hot encoding, use argmax to convert
+y_pred = np.argmax(predictions, axis=-1) # axis=-1 means last axis
+y_test_act = np.argmax(y_test, axis=-1) # undo one-hot encoding
+
+# Print print prediction accuracy
+print('Prediction accuracy: {0:.3f}'.format(accuracy_score(y_test_act, y_pred)))
+
+# Print a report of classification performance metrics
+print(classification_report(y_test_act, y_pred, target_names=t_names))
+
+# Plot a confusion matrix
+cm = confusion_matrix(y_test_act, y_pred)
+cm_df = pd.DataFrame(cm,
+                     index = t_names, 
+                     columns = t_names)
+fig = plt.figure(figsize=(6.5,5))
+sns.heatmap(cm_df, annot=True, fmt='d', cmap='cubehelix_r')
+plt.title('1D CNN using '+dataset+'\nAccuracy:{0:.3f}'.format(accuracy_score(y_test_act, y_pred)))
+plt.ylabel('True label')
+plt.xlabel('Predicted label')
+plt.tight_layout() # keeps labels from being cutoff when saving as pdf
+plt.show()
